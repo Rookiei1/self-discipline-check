@@ -1,0 +1,74 @@
+name: Branch build
+
+# Unsigned archive build. No secrets, no upload. Only pushes to this repository run it.
+on:
+  push:
+    branches:
+      - 'feature/**'
+    paths:
+      - 'RebootWatch/**'
+      - 'Tests/**'
+      - 'project.yml'
+      - '.github/workflows/branch-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  logic:
+    name: Logic tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Compile and run
+        run: |
+          swiftc --version
+          swiftc RebootWatch/DisciplineLog.swift Tests/main.swift -o /tmp/logtests
+          /tmp/logtests
+
+  build:
+    name: Unsigned Watch archive
+    needs: logic
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: '26.3'
+
+      - name: Install build tools
+        run: brew install xcodegen librsvg
+
+      - name: Render Watch app icon
+        run: bash ci/render_icon.sh
+
+      - name: Generate and compile without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project RebootWatch.xcodeproj -scheme RebootWatch \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath build/Unsigned.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            archive > "$RUNNER_TEMP/build.log" 2>&1 || {
+              tail -n 100 "$RUNNER_TEMP/build.log"
+              exit 1
+            }
+          echo "Unsigned archive built."

@@ -1,0 +1,89 @@
+name: RebootWatch
+
+options:
+  deploymentTarget:
+    iOS: "18.0"
+    watchOS: "10.0"
+
+settings:
+  base:
+    MARKETING_VERSION: "1.1"
+    CURRENT_PROJECT_VERSION: "1"
+    REBOOTWATCH_APP_PROFILE: "match AppStore com.rookiei1.RebootWatch"
+    REBOOTWATCH_WATCH_PROFILE: "match AppStore com.rookiei1.RebootWatch.watchkitapp"
+
+schemes:
+  RebootWatch:
+    build:
+      targets:
+        RebootWatch: all
+    archive:
+      config: Release
+
+  "RebootWatch Watch App":
+    build:
+      targets:
+        "RebootWatch Watch App": all
+    run:
+      config: Debug
+
+targets:
+  RebootWatch:
+    type: application.watchapp2-container
+    platform: iOS
+    deploymentTarget: "18.0"
+    dependencies:
+      - target: "RebootWatch Watch App"
+        embed: true
+    info:
+      path: RebootWatchContainerInfo.plist
+      properties:
+        CFBundleDisplayName: "Self-Discipline Check"
+        CFBundleName: RebootWatch
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rookiei1.RebootWatch
+        PRODUCT_NAME: RebootWatch
+        GENERATE_INFOPLIST_FILE: NO
+        SDKROOT: iphoneos
+        SKIP_INSTALL: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        PROVISIONING_PROFILE_SPECIFIER: "$(REBOOTWATCH_APP_PROFILE)"
+
+  "RebootWatch Watch App":
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: RebootWatch
+    info:
+      path: RebootWatch/Info.plist
+      properties:
+        CFBundleDisplayName: "Self-Discipline Check"
+        CFBundleName: RebootWatch
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleIconName: AppIcon
+        WKApplication: true
+        WKWatchOnly: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rookiei1.RebootWatch.watchkitapp
+        PRODUCT_NAME: RebootWatch
+        GENERATE_INFOPLIST_FILE: NO
+        SDKROOT: watchos
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "4"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR: all
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        PROVISIONING_PROFILE_SPECIFIER: "$(REBOOTWATCH_WATCH_PROFILE)"

@@ -1,0 +1,107 @@
+require "shellwords"
+
+default_platform(:ios)
+
+APP_BUNDLE_ID = "com.rookiei1.RebootWatch"
+WATCH_BUNDLE_ID = "com.rookiei1.RebootWatch.watchkitapp"
+BUNDLE_IDS = [APP_BUNDLE_ID, WATCH_BUNDLE_ID].freeze
+# Signing material lives in a separate private repository. Its address comes from
+# a GitHub secret; this public repository holds no keys, certificates or passwords.
+MATCH_BRANCH = "signing-assets-v2"
+
+def append_summary(text)
+  path = ENV["GITHUB_STEP_SUMMARY"]
+  File.open(path, "a") { |file| file.puts(text) } unless path.to_s.empty?
+end
+
+platform :ios do
+  private_lane :apple_api do
+    ensure_env_vars(env_vars: ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_PATH"])
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_PATH"),
+      duration: 1200,
+      in_house: false
+    )
+  end
+
+  # Read-only: never creates, renews or revokes a certificate or profile.
+  private_lane :install_signing do |options|
+    ensure_env_vars(env_vars: ["MATCH_PASSWORD", "SIGNING_STORE_URL"])
+    setup_ci(timeout: 0) if ENV["CI"]
+    ENV["MATCH_READONLY"] = "true"
+    match(
+      type: "appstore",
+      platform: "ios",
+      app_identifier: BUNDLE_IDS,
+      api_key: options.fetch(:api_key),
+      git_url: ENV.fetch("SIGNING_STORE_URL"),
+      git_branch: MATCH_BRANCH,
+      clone_branch_directly: true,
+      readonly: true,
+      keychain_name: ENV.fetch("MATCH_KEYCHAIN_NAME", "login.keychain"),
+      keychain_password: ENV.fetch("MATCH_KEYCHAIN_PASSWORD", ""),
+      skip_docs: true
+    )
+    teams = BUNDLE_IDS.map { |bundle| ENV["sigh_#{bundle}_appstore_team-id"] }
+    UI.user_error!("Both App Store profiles must contain the same nonempty Apple Team ID") if teams.any? { |team| team.to_s.empty? } || teams.uniq.size != 1
+    profiles = BUNDLE_IDS.to_h do |bundle|
+      name = ENV["sigh_#{bundle}_appstore_profile-name"]
+      UI.user_error!("Installed profile name is missing for #{bundle}") if name.to_s.empty?
+      [bundle, name]
+    end
+    { team_id: teams.first, profiles: profiles }
+  end
+
+  desc "Use existing signing assets, archive the Watch app, and upload to TestFlight"
+  lane :release_testflight do
+    api_key = apple_api
+    signing = install_signing(api_key: api_key)
+    version = get_version_number(xcodeproj: "RebootWatch.xcodeproj", target: "RebootWatch")
+    latest = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: APP_BUNDLE_ID,
+      version: version,
+      initial_build_number: 0
+    )
+    # Query ASC on every attempt; rerunning never blindly reuses the previous number.
+    floor = 1000 + ENV.fetch("GITHUB_RUN_NUMBER", "1").to_i
+    build_number = [latest.to_i + 1, floor].max
+    xcargs = {
+      "DEVELOPMENT_TEAM" => signing[:team_id],
+      "CURRENT_PROJECT_VERSION" => build_number.to_s,
+      "CODE_SIGN_STYLE" => "Manual",
+      "REBOOTWATCH_APP_PROFILE" => signing[:profiles].fetch(APP_BUNDLE_ID),
+      "REBOOTWATCH_WATCH_PROFILE" => signing[:profiles].fetch(WATCH_BUNDLE_ID)
+    }.map { |key, value| "#{key}=#{value.shellescape}" }.join(" ")
+    build_app(
+      project: "RebootWatch.xcodeproj",
+      scheme: "RebootWatch",
+      clean: true,
+      # fastlane 2.241.0 validates the legacy name; Xcode accepts this alias.
+      export_method: "app-store",
+      archive_path: "build/RebootWatch.xcarchive",
+      output_directory: "build/ios/ipa",
+      output_name: "RebootWatch.ipa",
+      buildlog_path: "build/logs",
+      skip_profile_detection: true,
+      xcargs: xcargs,
+      export_options: {
+        signingStyle: "manual",
+        signingCertificate: "Apple Distribution",
+        teamID: signing[:team_id],
+        provisioningProfiles: signing[:profiles]
+      }
+    )
+    # Refresh JWT after a potentially long archive.
+    api_key = apple_api
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_BUNDLE_ID,
+      ipa: "build/ios/ipa/RebootWatch.ipa",
+      skip_waiting_for_build_processing: false
+    )
+    append_summary("### TestFlight upload complete\nVersion #{version}, build #{build_number}. App Store Connect processing completed. App Store review submission is a separate step.")
+  end
+end
